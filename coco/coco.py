@@ -545,7 +545,8 @@ class COCO:
         image_id_mapping = {i['id']: i[IMG_FILENAME] for i in self.images}
         self.remap_image_id(image_id_mapping)
 
-    def mosaic(self, img_dir: str, out_dir: str, cats: Union[set, int] = 1, const_boxes: List[List[int]] = ()) -> 'COCO':
+    def mosaic(self, img_dir: str, out_dir: str, cats: Union[set, int] = 1,
+               const_boxes: List[List[int]] = ()) -> 'COCO':
         if isinstance(cats, (int, str)):
             cats = {cats}
         self.filter_cls(cats)
@@ -599,6 +600,7 @@ class COCO:
                 print(f'remove {len(no_img_set)} images with no image')
         return self
 
+
 def main():
     intro_str = '''
     visualize coco data:
@@ -620,4 +622,8 @@ def main():
     if len(sys.argv) < 2:
         print(intro_str)
     else:
-        eval(sys.argv[1])
+        eval(sys.argv[1])  # todo change to argparse
+
+
+if __name__ == '__main__':
+    main()
