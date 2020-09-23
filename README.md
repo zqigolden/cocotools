@@ -10,7 +10,7 @@ A tool for python/shell to manage json dataset files in coco format
 3. `from coco import COCO; ...` in python code
 
 ## install
-- pip install https://github.com/zqigolden/cocotools
+- pip install https://github.com/zqigolden/cocotools/archive/master.zip
 
 ## uninstall
 - pip uninstall cocotools
