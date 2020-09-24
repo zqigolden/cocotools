@@ -1,8 +1,4 @@
-from os.path import basename
-import shutil
-import setuptools
 from setuptools import setup
-from setuptools.command.install_scripts import install_scripts
 
 setup(
     name='cocotools',

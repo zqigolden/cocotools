@@ -12,7 +12,6 @@ from collections import OrderedDict, defaultdict, Counter
 from typing import List, Dict, Set, Iterable, Union
 from operator import itemgetter
 import numpy as np
-
 try:
     from tqdm import tqdm
 except ImportError:
@@ -35,7 +34,7 @@ def get_box(bbox):
     return np.s_[bbox[1]:bbox[1] + bbox[3], bbox[0]:bbox[0] + bbox[2], :]
 
 
-def refine_box(box: List, cols: int = MAX_INT, rows: int = MAX_INT) -> List:
+def limit_box_in_image(box: List, cols: int = MAX_INT, rows: int = MAX_INT) -> List:
     """
     limit the box in image which has the size **cols** and **rows**
     :param box: [x, y, w, h] box
@@ -152,7 +151,25 @@ class COCO:
         })
 
     @staticmethod
-    def from_detect_file(labeling_file_name, th=0.5):
+    def from_detect_file(labeling_file_name: str, th: float = 0.5) -> 'COCO':
+        """
+        convert detection result file into coco format
+        detection result format:
+            [{
+             "bbox": [
+              1842.02978515625,
+              434.2183532714844,
+              76.0950927734375,
+              148.32260131835938
+             ],
+             "score": 0.0180501826107502,
+             "category_id": 1,
+             "image_id": "FormatFactoryPart1.mp4_20200922_210922.636.jpg"
+            }, ...]
+        :param labeling_file_name: the filename of detection result file
+        :param th: score threshold, boxes which one's score lower than th are discard.
+        :return: COCO result
+        """
         with open(labeling_file_name, "r") as f:
             detect_data = json.load(f)
         detect_data = list(filter(lambda i: i['score'] > th, detect_data))
@@ -168,7 +185,7 @@ class COCO:
 
     @staticmethod
     def from_labeling_file(labeling_file_name, image_dir, categories_list):
-        assert image_dir, "none img_path"
+        assert image_dir, f"none img_path: {image_dir}"
         with open(labeling_file_name, "r") as f:
             labeling_data = json.load(f)
 
@@ -329,7 +346,7 @@ class COCO:
             xbias, ybias, x2bias, y2bias = (_rand_border() for _ in range(4))
             xbias = -xbias
             ybias = -ybias
-            crop_box = refine_box([
+            crop_box = limit_box_in_image([
                 box[0] + xbias,
                 box[1] + ybias,
                 box[2] + x2bias - xbias,
@@ -339,8 +356,8 @@ class COCO:
             )
             if crop_box[2] <= 0 or crop_box[3] <= 0:
                 continue
-            new_box = refine_box([-xbias, -ybias, box[2], box[3]],
-                                 cols=crop_box[2], rows=crop_box[3])
+            new_box = limit_box_in_image([-xbias, -ybias, box[2], box[3]],
+                                         cols=crop_box[2], rows=crop_box[3])
             new_ann['old_bbox'] = box
             new_ann['bbox'] = new_box
             new_img_data = cv2.imread(old_img_name)[get_box(crop_box)]
@@ -374,7 +391,7 @@ class COCO:
             count = 0
             for ann in ann_dict[image['id']]:
                 color = colors[ann[ANN_CAT_ID] % len(colors)]
-                box = refine_box(ann['bbox'])
+                box = limit_box_in_image(ann['bbox'])
                 img = cv2.rectangle(img, (box[0], box[1]), (box[0] + box[2], box[1] + box[3]),
                                     color, 3, cv2.LINE_AA)
                 if 'score' in ann:
@@ -570,15 +587,15 @@ class COCO:
     def health_check(self, img_dir=None, remove_no_image_ann=False):
         exc_data = [i for i in Counter(i['id'] for i in self.images).items() if i[1] > 1]
         if len(exc_data) > 0:
-            raise Exception('images id not uniq:\n' + str(exc_data))
+            raise Exception(f'images id not uniq:\n{exc_data}')
 
         exc_data = [i for i in Counter(i['id'] for i in self.annotations).items() if i[1] > 1]
         if len(exc_data) > 0:
-            raise Exception('anns id not uniq:\n' + str(exc_data))
+            raise Exception(f'anns id not uniq:\n{exc_data}')
 
         exc_data = [i for i in Counter(i['id'] for i in self.categories).items() if i[1] > 1]
         if len(exc_data) > 0:
-            raise Exception('cats id not uniq:\n' + str(exc_data))
+            raise Exception(f'cats id not uniq:\n{exc_data}')
 
         img_ids = get_set(self.images)
         for i in self.anns:
@@ -608,11 +625,8 @@ def main():
     filter data:
         COCO('instances_train_shoes.json').head(1)
         COCO('instances_train_shoes.json').keep(min_area=300)
-    convert labeling result:
-        label_mapping={"2_运动鞋":2, "18_皮鞋":18, "29_靴子":29, "43_拖鞋":43, "54_凉鞋":54, "61_高跟鞋":61, "167_滑冰和滑雪鞋":167};
-        COCO.from_labeling_file('labeling.json', '/ssd/zq/sergio/cut_images', list(label_mapping.keys())).remapping_label(label_mapping)
     filter classes:
-        COCO('/ssd/zq/Objects365/Annotations/train/train.json').filter_class({2, 18, 29, 43, 54, 61, 167})
+        COCO('Objects365/Annotations/train/train.json').filter_class({2, 18, 29, 43, 54, 61, 167})
     output:
         COCO('instances_train.json').print()
         COCO('instances_train.json').to_json('out.json')
