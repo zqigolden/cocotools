@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='cocotools',
     python_requires='>=3.6',
-    version='0.1.1',
+    version='0.1.1.1',
     description='a tool to manage cocotools dataset file',
     author='qzhu',
     author_email='qzhu.working@gmail.com',
@@ -15,6 +15,6 @@ setup(
         'pycocotools'
     ],
     entry_points={'console_scripts': [
-        'cocotools = cocotools.__main__:main',
+        'coco=cocotools.__main__:main',
     ]},
 )
