@@ -1,1 +1,0 @@
-from .cocotools import main

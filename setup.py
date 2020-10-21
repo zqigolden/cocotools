@@ -1,13 +1,13 @@
 from setuptools import setup
 
 setup(
-    name='cocotools',
+    name='coco',
     python_requires='>=3.6',
-    version='0.1.1.1',
-    description='a tool to manage cocotools dataset file',
+    version='0.1.1.2',
+    description='a tool to manage coco dataset file',
     author='qzhu',
     author_email='qzhu.working@gmail.com',
-    packages=['cocotools'],
+    packages=['coco'],
     install_requires=[
         'opencv-python>=4.2.0',
         'tqdm>=4.36.1',
@@ -15,6 +15,6 @@ setup(
         'pycocotools'
     ],
     entry_points={'console_scripts': [
-        'coco=cocotools.__main__:main',
+        'coco=coco.__main__:main',
     ]},
 )

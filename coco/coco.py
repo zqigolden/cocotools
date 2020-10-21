@@ -2,6 +2,8 @@
 
 import copy
 import argparse
+import shutil
+
 import cv2
 import fnmatch
 import json
@@ -15,6 +17,7 @@ import tempfile
 from collections import OrderedDict, defaultdict, Counter
 from typing import List, Dict, Set, Iterable, Union, Optional
 from operator import itemgetter
+
 LOGLEVEL = os.environ.get('LOGLEVEL', 'INFO').upper()
 logging.basicConfig(level=LOGLEVEL)
 
@@ -137,6 +140,36 @@ def remap_num(data: List[Dict], label='id', start=0, order_by=None) -> List[dict
     return data
 
 
+def make_dt_by_gt(dt_file, gt_coco):
+    with open(dt_file) as f:
+        dt_content = f.read()
+        try:
+            json.loads(dt_content)
+            return dt_file
+        except:
+            # format: imgname [conf cls x y w h] ...
+            dt = []
+            gt_coco.imgname_id_dict(cache=False)
+            for line in dt_content.strip().split('\n'):
+                items = line.strip().split(' ')
+                assert len(items) % 6 == 1
+                file_name = items[0]
+                file_id = gt_coco.imgname_id_dict()[file_name]
+                del items[0]
+                while items:
+                    conf, cls, x, y, w, h = items[:6]
+                    dt.append({
+                        ANN_IMG_ID: file_id,
+                        ANN_CAT_ID: int(cls),
+                        'score': float(conf),
+                        'bbox': [int(x), int(y), int(w), int(h)]
+                    })
+                    del items[:6]
+            tmp_file_dt = tempfile.NamedTemporaryFile(mode='w+', delete=False)
+            json.dump(dt, tmp_file_dt)
+            return tmp_file_dt.name
+
+
 class COCO:
     def __len__(self):
         return len(self.images)
@@ -172,7 +205,7 @@ class COCO:
     @staticmethod
     def from_detect_file(labeling_file_name: str, th: float = 0.5) -> 'COCO':
         """
-        convert detection result file into cocotools format
+        convert detection result file into coco format
         detection result format:
             [{
              "bbox": [
@@ -313,6 +346,7 @@ class COCO:
                     of.write(out_str)
             else:
                 out_file.write(out_str)
+            return self
         return out_str
 
     def __str__(self):
@@ -437,14 +471,14 @@ class COCO:
         return self
 
     def merge(self, coco_obj: 'COCO', same_cats=False, strict=True) -> 'COCO':
-        """combine two cocotools dataset
+        """combine two coco dataset
 
         Args:
             coco_obj (COCO):
             same_cats (bool, optional): True: Use the old categories, False: Two categories are all different. Defaults to False.
-            :param coco_obj: the other cocotools dataset
+            :param coco_obj: the other coco dataset
             :param same_cats: True: Use the same categories, False: Two categories are all different. Defaults to False.
-            :param strict: check cocotools format before merge
+            :param strict: check coco format before merge
 
         Returns:
             self
@@ -515,12 +549,36 @@ class COCO:
             self.remove_imgs(ids=dst_ids)
             return self
 
-    def filter(self, images_rule=None, annotaions_rule=None, categories_rule=None):
+    def split_dataset(self,
+                      front: str = 'instances_train.json',
+                      tail: str = 'instances_val.json',
+                      front_num: float = 0.8,
+                      indent=None,
+                      image_dir=None):
+        val_part = self.split(locate=front_num).to_json(tail, indent=indent)
+        self.to_json(front, indent=indent)
+        val_part.imgname_id_dict(cache=False)
+        self.imgname_id_dict(cache=False)
+        if image_dir:
+            def copy_images(dataset: 'COCO', dst_dir: str):
+                if not os.path.isdir(dst_dir):
+                    os.makedirs(dst_dir)
+                for img_name in dataset.imgname_id_dict():
+                    img_src_path = os.path.join(image_dir, img_name)
+                    img_dst_path = os.path.join(dst_dir, img_name)
+                    shutil.copyfile(img_src_path, img_dst_path, follow_symlinks=False)
+            val_dir = os.path.join(image_dir, '..', 'val')
+            train_dir = os.path.join(image_dir, '..', 'train')
+            copy_images(val_part, val_dir)
+            copy_images(self, train_dir)
+        return self
+
+    def filter(self, images_rule=None, annotations_rule=None, categories_rule=None):
         pre_stat = self.stat()
         if images_rule:
             self.images = list(filter(images_rule, self.images))
-        if annotaions_rule:
-            self.annotations = list(filter(annotaions_rule, self.annotations))
+        if annotations_rule:
+            self.annotations = list(filter(annotations_rule, self.annotations))
         if categories_rule:
             self.categories = list(filter(categories_rule, self.categories))
         if self.stat() == pre_stat:
@@ -528,7 +586,7 @@ class COCO:
         kept_img_ids = get_set(self.imgs) & get_set(self.anns, ANN_IMG_ID)
         return self.filter(
             images_rule=lambda x: x['id'] in kept_img_ids,
-            annotaions_rule=lambda x: x['image_id'] in kept_img_ids and x[ANN_CAT_ID] in get_set(self.categories))
+            annotations_rule=lambda x: x['image_id'] in kept_img_ids and x[ANN_CAT_ID] in get_set(self.categories))
 
     def filter_imgs(self, vals, key='id'):
         vals = promise_set(vals)
@@ -536,7 +594,7 @@ class COCO:
 
     def filter_anns(self, vals, key='id'):
         vals = promise_set(vals)
-        return self.filter(annotaions_rule=lambda x: x[key] in vals)
+        return self.filter(annotations_rule=lambda x: x[key] in vals)
 
     def filter_cls(self, vals, key='id'):
         vals = promise_set(vals)
@@ -644,6 +702,7 @@ class COCO:
 
     def evaluate(self, dt: str, cls: Optional[Union[dict, set]] = None) -> 'COCO':
         from .eval import Evaluator
+        dt = make_dt_by_gt(dt, self)
         tmp_file_dt = tempfile.NamedTemporaryFile(mode='w+')
         tmp_file = tempfile.NamedTemporaryFile(mode='w+')
         logging.debug(f'tmp_file_dt = {tmp_file_dt.name}')
@@ -665,39 +724,49 @@ class COCO:
         evaluator.evaluate(dt)
         return self
 
-_intro_str = '''
-    visualize cocotools data:
+
+_intro_str = f'''
+    visualize coco data:
         COCO('instances_train_shoes.json').visualize('../train', 'out_dir')
     filter data:
         COCO('instances_train_shoes.json').head(1)
         COCO('instances_train_shoes.json').keep(min_area=300)
     filter classes:
-        COCO('Objects365/Annotations/train/train.json').filter_class({2, 18, 29, 43, 54, 61, 167})
+        COCO('Objects365/Annotations/train/train.json').filter_class({{2, 18, 29, 43, 54, 61, 167}})
     output:
         COCO('instances_train.json').print()
         COCO('instances_train.json').to_json('out.json')
     health check:
         COCO('instances_train.json').health_check('../train/')
-'''
+    dir(COCO): {dir(COCO)}" '''
+
 
 def arg_parse():
-
-    parser = argparse.ArgumentParser(description=_intro_str)
-    parser.add_argument('inputs', nargs='+', help='input files')
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('inputs', nargs='*', help='input files')
     parser.add_argument('-c', '--command', action='store_true', help='commands in python')
-    parser.add_argument('-e', '--evaluate', action='store_true', help='evaluate cocotools result, file1: gt; file2: dt')
+    parser.add_argument('-e', '--evaluate', action='store_true', help='evaluate coco result, file1: gt; file2: dt')
+    parser.add_argument('-h', '--help', action='store_true', help='print help')
     parser.add_argument('-o', '--output')
     return parser.parse_args()
 
+
 def main():
     args = arg_parse()
-    if not args.command:
-        if args.evaluate:
-            assert len(args.input) > 2
-            gt_file = args.input[0]
-            det_file = args.input[1]
-            COCO(gt_file).evaluate(det_file)
+    print(vars(args))
+    for arg in vars(args):
+        arg, getattr(args, arg)
 
+    if not args.command:
+        if args.help:
+            print(_intro_str)
+            return
+        if args.evaluate:
+            assert len(args.inputs) == 2
+            gt_file = args.inputs[0]
+            det_file = args.inputs[1]
+            COCO(gt_file).evaluate(det_file)
+            return  # IMPORTANT: all sub-functions should end with return
     for cmd in args.inputs:
         eval(cmd)
 
