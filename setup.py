@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='coco',
     python_requires='>=3.6',
-    version='0.1.1.2',
+    version='0.1.1.3',
     description='a tool to manage coco dataset file',
     author='qzhu',
     author_email='qzhu.working@gmail.com',

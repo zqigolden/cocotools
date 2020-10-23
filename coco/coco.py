@@ -7,6 +7,7 @@ import shutil
 import cv2
 import fnmatch
 import json
+import itertools
 import os
 import logging
 import random
@@ -203,7 +204,7 @@ class COCO:
         })
 
     @staticmethod
-    def from_detect_file(labeling_file_name: str, th: float = 0.5) -> 'COCO':
+    def from_detect_file(labeling_file_name: str, gt: str = None, th: float = 0.5) -> 'COCO':
         """
         convert detection result file into coco format
         detection result format:
@@ -227,7 +228,11 @@ class COCO:
         detect_data = list(filter(lambda i: i['score'] > th, detect_data))
         image_ids = get_set(detect_data, ANN_IMG_ID)
         cat_ids = get_set(detect_data, ANN_CAT_ID)
-        images = [{'id': i, IMG_FILENAME: i} for i in image_ids]
+        if isinstance(detect_data[0][ANN_IMG_ID], str):
+            images = [{'id': i, IMG_FILENAME: i} for i in image_ids]
+        else:
+            gt_coco = COCO(gt)
+            images = [{'id': i, IMG_FILENAME: gt_coco.id_imgname_dict()[i]} for i in image_ids]
         cat = [{'id': i} for i in cat_ids]
         return COCO(obj={
             IMAGES: images,
@@ -407,8 +412,8 @@ class COCO:
                 box[1] + ybias,
                 box[2] + x2bias - xbias,
                 box[3] + y2bias - ybias, ],
-                cols=self.get_img_by_id(ann[ANN_IMG_ID])['width'],
-                rows=self.get_img_by_id(ann[ANN_IMG_ID])['height'],
+                cols=self.get_img_by_id(ann[ANN_IMG_ID]).get('width', MAX_INT),
+                rows=self.get_img_by_id(ann[ANN_IMG_ID]).get('height', MAX_INT),
             )
             if crop_box[2] <= 0 or crop_box[3] <= 0:
                 continue
@@ -431,7 +436,10 @@ class COCO:
         return self
 
     def visualize(self, img_dir, out_img_dir='vis', skip_no_image=True):
-        colors = ((255, 0, 255), (255, 255, 0), (0, 255, 255))
+
+        colors = ((255, 0, 255), (255, 255, 0), (0, 255, 255),
+                  (255, 127, 127), (127, 127, 255), (127, 255, 127),
+                  (255, 0, 0), (0, 255, 0), (0, 0, 255))
         ann_dict = group_by(self.annotations, ANN_IMG_ID)
         if not os.path.exists(out_img_dir):
             os.makedirs(out_img_dir)
