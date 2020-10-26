@@ -17,6 +17,8 @@ A tool for python/shell to manage json dataset files in coco format
 - pip uninstall cocotools
 
 ## changelog
+- 0.1.1.5
+    add keep_images option for filters
 - 0.1.1.4
     add debug argument
 - 0.1.1.3

@@ -581,7 +581,7 @@ class COCO:
             copy_images(self, train_dir)
         return self
 
-    def filter(self, images_rule=None, annotations_rule=None, categories_rule=None):
+    def filter(self, images_rule=None, annotations_rule=None, categories_rule=None, keep_images=True):
         pre_stat = self.stat()
         if images_rule:
             self.images = list(filter(images_rule, self.images))
@@ -593,20 +593,20 @@ class COCO:
             return self
         kept_img_ids = get_set(self.imgs) & get_set(self.anns, ANN_IMG_ID)
         return self.filter(
-            images_rule=lambda x: x['id'] in kept_img_ids,
-            annotations_rule=lambda x: x['image_id'] in kept_img_ids and x[ANN_CAT_ID] in get_set(self.categories))
+            images_rule=(lambda x: x['id'] in kept_img_ids) if not keep_images else None,
+            annotations_rule=lambda x: x[ANN_CAT_ID] in get_set(self.categories))
 
     def filter_imgs(self, vals, key='id'):
         vals = promise_set(vals)
         return self.filter(images_rule=lambda x: x[key] in vals)
 
-    def filter_anns(self, vals, key='id'):
+    def filter_anns(self, vals, key='id', keep_images=True):
         vals = promise_set(vals)
-        return self.filter(annotations_rule=lambda x: x[key] in vals)
+        return self.filter(annotations_rule=lambda x: x[key] in vals, keep_images=keep_images)
 
-    def filter_cls(self, vals, key='id'):
+    def filter_cls(self, vals, key='id', keep_images=True):
         vals = promise_set(vals)
-        return self.filter(categories_rule=lambda x: x[key] in vals)
+        return self.filter(categories_rule=lambda x: x[key] in vals, keep_images=keep_images)
 
     def remove_imgs(self,
                     names: Union[str, Iterable[str]] = (),
