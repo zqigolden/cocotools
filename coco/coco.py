@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 
-import copy
 import argparse
-import shutil
-
-import cv2
+import copy
 import fnmatch
 import json
-import itertools
-import os
 import logging
+import os
 import random
 import re
+import shutil
 import sys
-import numpy as np
 import tempfile
 from collections import OrderedDict, defaultdict, Counter
-from typing import List, Dict, Set, Iterable, Union, Optional
 from operator import itemgetter
+from typing import List, Dict, Set, Iterable, Union, Optional
+
+import cv2
+import numpy as np
 
 LOGLEVEL = os.environ.get('LOGLEVEL', 'INFO').upper()
-logging.basicConfig(level=LOGLEVEL)
+FORMAT = '[%(levelname)s] - %(asctime)s - %(pathname)s:%(lineno)d: %(message)s'
+logging.basicConfig(level=LOGLEVEL, format=FORMAT)
 
 try:
     from tqdm import tqdm
@@ -752,6 +752,7 @@ _intro_str = f'''
 def arg_parse():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('inputs', nargs='*', help='input files')
+    parser.add_argument('-d', '--debug', action='store_true', help='turn on debug mode')
     parser.add_argument('-c', '--command', action='store_true', help='commands in python')
     parser.add_argument('-e', '--evaluate', action='store_true', help='evaluate coco result, file1: gt; file2: dt')
     parser.add_argument('-h', '--help', action='store_true', help='print help')
@@ -761,9 +762,9 @@ def arg_parse():
 
 def main():
     args = arg_parse()
-    print(vars(args))
-    for arg in vars(args):
-        arg, getattr(args, arg)
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+    logging.debug(vars(args))
 
     if not args.command:
         if args.help:
