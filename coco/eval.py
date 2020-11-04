@@ -75,7 +75,7 @@ class Evaluator(object):
         self._print_detection_eval_metrics(coco_eval)
 
 
-if __name__ == '__main__':
+if __name__ == '__main__.py':
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dt', type=str, help='JSON format detection-results file.', default='bbox.json')
     parser.add_argument('-g', '--gt', type=str, help='JSON format annotation file.',)

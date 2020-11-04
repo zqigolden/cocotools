@@ -4,13 +4,13 @@ import argparse
 import copy
 import fnmatch
 import json
-import logging
 import os
 import random
 import re
 import shutil
 import sys
 import tempfile
+from loguru import logger
 from collections import OrderedDict, defaultdict, Counter
 from operator import itemgetter
 from typing import List, Dict, Set, Iterable, Union, Optional
@@ -19,8 +19,8 @@ import cv2
 import numpy as np
 
 LOGLEVEL = os.environ.get('LOGLEVEL', 'INFO').upper()
-FORMAT = '[%(levelname)s] - %(asctime)s - %(pathname)s:%(lineno)d: %(message)s'
-logging.basicConfig(level=LOGLEVEL, format=FORMAT)
+logger.remove()
+logger.add(sys.stderr, level=LOGLEVEL)
 
 try:
     from tqdm import tqdm
@@ -148,24 +148,44 @@ def make_dt_by_gt(dt_file, gt_coco):
             json.loads(dt_content)
             return dt_file
         except:
-            # format: imgname [conf cls x y w h] ...
-            dt = []
-            gt_coco.imgname_id_dict(cache=False)
-            for line in dt_content.strip().split('\n'):
-                items = line.strip().split(' ')
-                assert len(items) % 6 == 1
-                file_name = items[0]
-                file_id = gt_coco.imgname_id_dict()[file_name]
-                del items[0]
-                while items:
-                    conf, cls, x, y, w, h = items[:6]
-                    dt.append({
-                        ANN_IMG_ID: file_id,
-                        ANN_CAT_ID: int(cls),
-                        'score': float(conf),
-                        'bbox': [int(x), int(y), int(w), int(h)]
-                    })
-                    del items[:6]
+            try:
+                # format: imgname [conf cls x y w h] ...
+                dt = []
+                gt_coco.imgname_id_dict(cache=False)
+                for line in dt_content.strip().split('\n'):
+                    items = line.strip().split(' ')
+                    assert len(items) % 6 == 1
+                    file_name = items[0]
+                    file_id = gt_coco.imgname_id_dict()[file_name]
+                    del items[0]
+                    while items:
+                        conf, cls, x, y, w, h = items[:6]
+                        dt.append({
+                            ANN_IMG_ID: file_id,
+                            ANN_CAT_ID: int(cls),
+                            'score': float(conf),
+                            'bbox': [int(x), int(y), int(w), int(h)]
+                        })
+                        del items[:6]
+            except:
+                # format: imgname [conf cls x y w h unknown1 unknown2] ...
+                dt = []
+                gt_coco.imgname_id_dict(cache=False)
+                for line in dt_content.strip().split('\n'):
+                    items = line.strip().split(' ')
+                    assert len(items) % 8 == 1
+                    file_name = items[0]
+                    file_id = gt_coco.imgname_id_dict()[file_name]
+                    del items[0]
+                    while items:
+                        conf, cls, x, y, w, h, _, _ = items[:8]
+                        dt.append({
+                            ANN_IMG_ID: file_id,
+                            ANN_CAT_ID: int(cls),
+                            'score': float(conf),
+                            'bbox': [int(x), int(y), int(w), int(h)]
+                        })
+                        del items[:8]
             tmp_file_dt = tempfile.NamedTemporaryFile(mode='w+', delete=False)
             json.dump(dt, tmp_file_dt)
             return tmp_file_dt.name
@@ -194,6 +214,7 @@ class COCO:
         self._id_img_dict = None
         self._img_name_id_dict = None
         self._id_img_name_dict = None
+        self._id_anns_dict = None
 
     @staticmethod
     def create(images, annotations, categories) -> 'COCO':
@@ -204,7 +225,7 @@ class COCO:
         })
 
     @staticmethod
-    def from_detect_file(labeling_file_name: str, gt: str = None, th: float = 0.5) -> 'COCO':
+    def from_detect_file(detect_file_name: str, gt: str = None, th: float = 0.5) -> 'COCO':
         """
         convert detection result file into coco format
         detection result format:
@@ -219,13 +240,26 @@ class COCO:
              "category_id": 1,
              "image_id": "FormatFactoryPart1.mp4_20200922_210922.636.jpg"
             }, ...]
-        :param labeling_file_name: the filename of detection result file
+        :param detect_file_name: the filename of detection result file
+        :param gt: gt coco file, required while labeling_file_name is not coco format or
+            image names in labeling_file aren't image file name
         :param th: score threshold, boxes which one's score lower than th are discard.
         :return: COCO result
         """
-        with open(labeling_file_name, "r") as f:
-            detect_data = json.load(f)
+        gt_coco: COCO = None
+        if gt:
+            gt_coco = COCO(gt)
+        try:
+            with open(detect_file_name, "r") as f:
+                detect_data = json.load(f)
+        except json.decoder.JSONDecodeError:
+            assert gt, 'gt required'
+            new_dt = make_dt_by_gt(detect_file_name, gt_coco)
+            with open(new_dt, "r") as f:
+                detect_data = json.load(f)
         detect_data = list(filter(lambda i: i['score'] > th, detect_data))
+        for i, data in enumerate(detect_data):
+            data['id'] = i
         image_ids = get_set(detect_data, ANN_IMG_ID)
         cat_ids = get_set(detect_data, ANN_CAT_ID)
         if isinstance(detect_data[0][ANN_IMG_ID], str):
@@ -233,7 +267,7 @@ class COCO:
         else:
             gt_coco = COCO(gt)
             images = [{'id': i, IMG_FILENAME: gt_coco.id_imgname_dict()[i]} for i in image_ids]
-        cat = [{'id': i} for i in cat_ids]
+        cat = copy.deepcopy(gt_coco.cats) if gt else [{'id': i, 'name': str(i)} for i in cat_ids]
         return COCO(obj={
             IMAGES: images,
             ANNOTATIONS: detect_data,
@@ -328,6 +362,16 @@ class COCO:
             self._id_img_name_dict = OrderedDict((i['id'], i[IMG_FILENAME]) for i in self.images)
         return self._id_img_name_dict
 
+    def id_anns_dict(self, cache=True):
+        if not getattr(self, '_id_anns_dict', None) or not cache:
+            self._id_anns_dict = OrderedDict((i['id'], []) for i in self.images)
+            for ann in self.anns:
+                self._id_anns_dict[ann[ANN_IMG_ID]].append(ann)
+        return self._id_anns_dict
+
+    def get_anns_by_image_id(self, image_id, cache=True):
+        return self.id_anns_dict(cache=cache)[image_id]
+
     def head(self, n=50):
         self.split(n, rand=False, return_new_part=False)
         return self
@@ -378,11 +422,15 @@ class COCO:
 
     @anns.setter
     def anns(self, new_ann):
-        self.anns = new_ann
+        self.annotations = new_ann
 
     @property
     def cats(self) -> List[Dict]:
         return self.categories
+
+    @cats.setter
+    def cats(self, new_cat) -> List[Dict]:
+        self.categories = new_cat
 
     def length(self) -> int:
         return len(self.images)
@@ -436,7 +484,6 @@ class COCO:
         return self
 
     def visualize(self, img_dir, out_img_dir='vis', skip_no_image=True):
-
         colors = ((255, 0, 255), (255, 255, 0), (0, 255, 255),
                   (255, 127, 127), (127, 127, 255), (127, 255, 127),
                   (255, 0, 0), (0, 255, 0), (0, 0, 255))
@@ -453,14 +500,24 @@ class COCO:
             out_img_name = os.path.join(out_img_dir, image[IMG_FILENAME])
             img = cv2.imread(img_name)
             count = 0
+
+            # add legend
+            x, y = 20, 20
+            for cat in self.cats:
+                name = cat.get('name', cat['id'])
+                color = colors[cat['id'] % len(colors)]
+                img = cv2.rectangle(img, (x, y), (x + 50, y + 50), color, -1)
+                cv2.putText(img, name, (x + 70, y + 50), cv2.FONT_HERSHEY_SIMPLEX, 2, color, 3)
+                y += 70
+
             for ann in ann_dict[image['id']]:
                 color = colors[ann[ANN_CAT_ID] % len(colors)]
                 box = limit_box_in_image(ann['bbox'])
                 img = cv2.rectangle(img, (box[0], box[1]), (box[0] + box[2], box[1] + box[3]),
                                     color, 3, cv2.LINE_AA)
                 if 'score' in ann:
-                    img = cv2.putText(img, f'{ann["score"]:.3f}', (box[0], box[1] - 2), cv2.FONT_HERSHEY_TRIPLEX, 1,
-                                      color)
+                    img = cv2.putText(img, f'{ann["score"]:.3f}', (box[0], box[1] - 2),
+                                      cv2.FONT_HERSHEY_TRIPLEX, 1, color)
                 count += 1
             if count != 0:
                 cv2.imwrite(out_img_name, img)
@@ -575,6 +632,7 @@ class COCO:
                     img_src_path = os.path.join(image_dir, img_name)
                     img_dst_path = os.path.join(dst_dir, img_name)
                     shutil.copyfile(img_src_path, img_dst_path, follow_symlinks=False)
+
             val_dir = os.path.join(image_dir, '..', 'val')
             train_dir = os.path.join(image_dir, '..', 'train')
             copy_images(val_part, val_dir)
@@ -594,7 +652,7 @@ class COCO:
         kept_img_ids = get_set(self.imgs) & get_set(self.anns, ANN_IMG_ID)
         return self.filter(
             images_rule=(lambda x: x['id'] in kept_img_ids) if not keep_images else None,
-            annotations_rule=lambda x: x[ANN_CAT_ID] in get_set(self.categories))
+            annotations_rule=lambda x: x[ANN_IMG_ID] in kept_img_ids and x[ANN_CAT_ID] in get_set(self.categories))
 
     def filter_imgs(self, vals, key='id'):
         vals = promise_set(vals)
@@ -691,7 +749,7 @@ class COCO:
         img_ids = get_set(self.images)
         for i in self.anns:
             if i[ANN_IMG_ID] not in img_ids:
-                raise Exception(f'not found image id {i["id"]} in {i}')
+                raise Exception(f'not found image id {i[ANN_IMG_ID]} in {i}')
 
         cat_ids = get_set(self.cats)
         for i in self.anns:
@@ -713,8 +771,8 @@ class COCO:
         dt = make_dt_by_gt(dt, self)
         tmp_file_dt = tempfile.NamedTemporaryFile(mode='w+')
         tmp_file = tempfile.NamedTemporaryFile(mode='w+')
-        logging.debug(f'tmp_file_dt = {tmp_file_dt.name}')
-        logging.debug(f'tmp_file = {tmp_file.name}')
+        logger.debug(f'tmp_file_dt = {tmp_file_dt.name}')
+        logger.debug(f'tmp_file = {tmp_file.name}')
         if not isinstance(cls, dict):
             cls = promise_set(cls)
         if cls:
@@ -755,30 +813,51 @@ def arg_parse():
     parser.add_argument('-d', '--debug', action='store_true', help='turn on debug mode')
     parser.add_argument('-c', '--command', action='store_true', help='commands in python')
     parser.add_argument('-e', '--evaluate', action='store_true', help='evaluate coco result, file1: gt; file2: dt')
+    parser.add_argument('-m', '--merge', action='store_true', help='merge all inputs, file1: coco; file2: coco, ...')
+    parser.add_argument('-v', '--visualize', action='store_true', help='visualize inputs, file1: coco; file2: img dir')
+    parser.add_argument('-p', '--print_stat', action='store_true',
+                        help='visualize coco stats(img len, ann len, cat len), file1: coco')
     parser.add_argument('-h', '--help', action='store_true', help='print help')
-    parser.add_argument('-o', '--output')
+    parser.add_argument('-o', '--output', default='/dev/stdout')
     return parser.parse_args()
 
-
+@logger.catch()
 def main():
     args = arg_parse()
     if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-    logging.debug(vars(args))
+        logger.getLogger().setLevel(logger.DEBUG)
+    logger.debug(vars(args))
 
     if not args.command:
         if args.help:
             print(_intro_str)
             return
-        if args.evaluate:
+        elif args.evaluate:
             assert len(args.inputs) == 2
             gt_file = args.inputs[0]
             det_file = args.inputs[1]
             COCO(gt_file).evaluate(det_file)
-            return  # IMPORTANT: all sub-functions should end with return
-    for cmd in args.inputs:
-        eval(cmd)
+        elif args.merge:
+            assert len(args.inputs) >= 2
+            dst = COCO(args.inputs[0])
+            for i in args.inputs[1:]:
+                dst.merge(COCO(i))
+            dst.to_json(out_file=args.output, indent=2)
+        elif args.visualize:
+            assert len(args.inputs) == 2
+            COCO(args.inputs[0]).visualize(img_dir=args.inputs[1])
+        elif args.print_stat:
+            assert len(args.inputs) >= 1
+            for i in args.inputs:
+                print(f'Stat of {i}:')
+                COCO(i).print_stat()
+        else:
+            for cmd in args.inputs:
+                eval(cmd)
+    else:
+        for cmd in args.inputs:
+            eval(cmd)
 
 
-if __name__ == '__main__':
+if __name__ == '__main__.py':
     main()
