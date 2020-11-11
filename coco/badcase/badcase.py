@@ -27,7 +27,8 @@ def calc_iou_xyxy(box_a, box_b):
     iou = intersect_area / float(union_area)
     return iou
 
-
+from loguru import logger
+@logger.catch
 def get_badcase(gt:COCO, dt:COCO, cat=1, threshold:float = 0.5)->COCO:
     """
     get badcase subset if any gt has lower iou than threshold with all dt boxes
@@ -51,21 +52,32 @@ def get_badcase(gt:COCO, dt:COCO, cat=1, threshold:float = 0.5)->COCO:
     fps = []
     fns = []
     for img in gt.imgs:
+        keep_gt_ann_pos = set()
+        keep_dt_ann_pos = set()
+        fp = 0
+        fn = 0
         image_id = img['id']
         if not image_id in dt.id_anns_dict():
             continue
         gt_anns = gt.get_anns_by_image_id(image_id)
         dt_anns = dt.get_anns_by_image_id(image_id)
         iou_matrix = np.array([[-calc_iou_xywh(g['bbox'], d['bbox']) for d in dt_anns] for g in gt_anns])
-        gt_result, dt_result = linear_sum_assignment(iou_matrix)
-        keep_gt_ann_pos = set()
-        keep_dt_ann_pos = set()
-        for i, j in zip(gt_result, dt_result):
-            if iou_matrix[i, j] < -threshold:
-                keep_gt_ann_pos.add(i)
-                keep_dt_ann_pos.add(j)
-        fp = (len(dt_anns) - len(keep_dt_ann_pos)) / len(dt_anns)
-        fn = (len(gt_anns) - len(keep_gt_ann_pos)) / len(gt_anns)
+        if len(gt_anns) != 0 and len(dt_anns) != 0:
+            gt_result, dt_result = linear_sum_assignment(iou_matrix)
+            for i, j in zip(gt_result, dt_result):
+                if iou_matrix[i, j] < -threshold:
+                    keep_gt_ann_pos.add(i)
+                    keep_dt_ann_pos.add(j)
+            fp = (len(dt_anns) - len(keep_dt_ann_pos)) / len(dt_anns)
+            fn = (len(gt_anns) - len(keep_gt_ann_pos)) / len(gt_anns)
+        elif len(gt_anns) == 0 and len(dt_anns) == 0:
+            pass
+        elif len(gt_anns) == 0 and len(dt_anns) != 0:
+            fn = 1
+        elif len(gt_anns) != 0 and len(dt_anns) == 0:
+            fp = 1
+        else:
+            raise Exception('Should not run here')
         fps.append(fp)
         fns.append(fn)
         if fp > 0.1 or fn > 0.1:
@@ -89,6 +101,7 @@ def main():
     parser.add_argument('dt')
     parser.add_argument('-i', '--img_dir', help='img dir for vis')
     parser.add_argument('-v', '--vis_dir', default='vis', help='output dir for vis')
+    parser.add_argument('-c', '--cat', default=1, type=int, help='category for analyze')
     parser.add_argument('-s', '--score_th', default=0.4, type=float)
     parser.add_argument('-o', '--iou_th', default=0.5, type=float)
     args = parser.parse_args()
@@ -97,7 +110,7 @@ def main():
     gt = COCO(args.gt)
     dt = COCO.from_detect_file(args.dt, gt=args.gt, th=score_threshold)
     print(f'eval for score threshold: {args.score_th}')
-    badcase = get_badcase(gt, dt, threshold=iou_threshold)
+    badcase = get_badcase(gt, dt, cat=args.cat, threshold=iou_threshold)
     print(f'Bad case stat(image, box, cls): {badcase.stat()}')
     if args.img_dir:
         assert args.img_dir, f'need -i/--img_dir argument for visualize'

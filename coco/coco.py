@@ -225,6 +225,14 @@ class COCO:
         })
 
     @staticmethod
+    def from_image_dir(image_dir, cls_list=('object',), suffix='jpg'):
+        assert os.path.isdir(image_dir)
+        image_names = sorted(i for i in os.listdir(image_dir) if i.endswith(suffix))
+        images = [{IMG_FILENAME: name, 'id': i} for i, name in enumerate(image_names)]
+        cats = [{'name': name, 'id': i} for i, name in enumerate(cls_list, start=1)]
+        return COCO.create(images, [], cats)
+
+    @staticmethod
     def from_detect_file(detect_file_name: str, gt: str = None, th: float = 0.5) -> 'COCO':
         """
         convert detection result file into coco format
@@ -275,14 +283,18 @@ class COCO:
         })
 
     @staticmethod
-    def from_labeling_file(labeling_file_name, image_dir, categories_list):
+    def from_label_file(labeling_file_name, image_dir, categories_list):
         assert image_dir, f"none img_path: {image_dir}"
         with open(labeling_file_name, "r") as f:
             labeling_data = json.load(f)
 
         labels = {}
-        for index, c in enumerate(categories_list, start=1):
-            labels[index] = c
+        if isinstance(categories_list, list) and isinstance(categories_list[0], dict) \
+                and 'id' in categories_list[0] and 'name' in categories_list[0]:
+            labels = {i['id']: i['name'] for i in categories_list}
+        else:
+            for index, c in enumerate(categories_list, start=1):
+                labels[index] = c
 
         image_name_id_dict = {}
         annotations = []
@@ -442,34 +454,31 @@ class COCO:
         new_imgs = []
         new_anns = []
 
-        def _rand_border():
-            return random.randint(min_border, max_border)
-
         for ann_id, ann in enumerate(self.annotations):
             new_ann = copy.copy(ann)
             new_ann[ANN_IMG_ID] = ann_id
             old_img_name = os.path.join(image_dir, id_name_dict[ann[ANN_IMG_ID]])
             assert os.path.exists(old_img_name), f'{old_img_name} not exist'
-            new_img_name = os.path.join(out_image_dir, id_name_dict[ann[ANN_IMG_ID]] + '.{}.jpg'.format(ann_id))
-            box = ann['bbox']
-            xbias, ybias, x2bias, y2bias = (_rand_border() for _ in range(4))
-            xbias = -xbias
-            ybias = -ybias
+            old_img_data = cv2.imread(old_img_name)
+            box = list(map(int, ann['bbox']))
+            xbias, ybias, x2bias, y2bias = (random.randint(min_border, max_border) for _ in range(4))
+            img_rows, img_cols = old_img_data.shape
             crop_box = limit_box_in_image([
-                box[0] + xbias,
-                box[1] + ybias,
-                box[2] + x2bias - xbias,
-                box[3] + y2bias - ybias, ],
-                cols=self.get_img_by_id(ann[ANN_IMG_ID]).get('width', MAX_INT),
-                rows=self.get_img_by_id(ann[ANN_IMG_ID]).get('height', MAX_INT),
+                box[0] - xbias,
+                box[1] - ybias,
+                box[2] + x2bias + xbias,
+                box[3] + y2bias + ybias, ],
+                cols=img_cols,
+                rows=img_rows,
             )
             if crop_box[2] <= 0 or crop_box[3] <= 0:
                 continue
-            new_box = limit_box_in_image([-xbias, -ybias, box[2], box[3]],
+            new_box = limit_box_in_image([xbias, ybias, box[2], box[3]],
                                          cols=crop_box[2], rows=crop_box[3])
             new_ann['old_bbox'] = box
             new_ann['bbox'] = new_box
             new_img_data = cv2.imread(old_img_name)[get_box(crop_box)]
+            new_img_name = os.path.join(out_image_dir, id_name_dict[ann[ANN_IMG_ID]] + '.{}.jpg'.format(ann_id))
             cv2.imwrite(new_img_name, new_img_data)
             new_img = {
                 IMG_FILENAME: os.path.basename(new_img_name),
@@ -700,16 +709,17 @@ class COCO:
         self.images = list(mem.values())
         return self
 
-    def to_num_id(self):
+    def to_num_id(self) -> 'COCO':
         self.images.sort(key=itemgetter(IMG_FILENAME))
         image_id_mapping = {i['id']: loc for loc, i in enumerate(self.images)}
         self.remap_image_id(image_id_mapping)
         remap_num(self.anns, order_by=ANN_IMG_ID)
         return self
 
-    def to_str_id(self):
+    def to_str_id(self) -> 'COCO':
         image_id_mapping = {i['id']: i[IMG_FILENAME] for i in self.images}
         self.remap_image_id(image_id_mapping)
+        return self
 
     def mosaic(self, img_dir: str, out_dir: str, cats: Union[set, int] = 1,
                const_boxes: List[List[int]] = ()) -> 'COCO':
@@ -808,7 +818,7 @@ _intro_str = f'''
 
 
 def arg_parse():
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser()
     parser.add_argument('inputs', nargs='*', help='input files')
     parser.add_argument('-d', '--debug', action='store_true', help='turn on debug mode')
     parser.add_argument('-c', '--command', action='store_true', help='commands in python')
@@ -817,9 +827,10 @@ def arg_parse():
     parser.add_argument('-v', '--visualize', action='store_true', help='visualize inputs, file1: coco; file2: img dir')
     parser.add_argument('-p', '--print_stat', action='store_true',
                         help='visualize coco stats(img len, ann len, cat len), file1: coco')
-    parser.add_argument('-h', '--help', action='store_true', help='print help')
+    #parser.add_argument('--help', action='store_true', help='print help')
     parser.add_argument('-o', '--output', default='/dev/stdout')
     return parser.parse_args()
+
 
 @logger.catch()
 def main():
@@ -829,10 +840,10 @@ def main():
     logger.debug(vars(args))
 
     if not args.command:
-        if args.help:
-            print(_intro_str)
-            return
-        elif args.evaluate:
+        # if args.help:
+        #     print(_intro_str)
+        #     return
+        if args.evaluate:
             assert len(args.inputs) == 2
             gt_file = args.inputs[0]
             det_file = args.inputs[1]

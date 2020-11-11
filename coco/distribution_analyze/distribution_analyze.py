@@ -60,25 +60,26 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('reference')
-    parser.add_argument('coco')
+    parser.add_argument('-c', '--coco')
     parser.add_argument('-t', '--threshold', default=0.03, type=float)
     args = parser.parse_args()
     ref = COCO(args.reference).health_check()
     ref_w, ref_h = calc_mean_width_height(ref, ignore_channel=True)['ALL']
-    print(f'distribution for {args.reference}: {ref_w}, {ref_h}')
-    coco = COCO(args.coco)
-    mean_wh = calc_mean_width_height(coco)
-    accepted_channels = set()
-    for channel, (w, h) in mean_wh.items():
-        threshold = args.threshold
-        if abs(w - ref_w) < threshold \
-                and abs(h - ref_h) < threshold \
-                and abs(w - ref_w) + abs(h - ref_h) < threshold * 1.5:
-            print(f'{channel} accepted, {mean_wh[channel]}')
-            accepted_channels.add(channel)
-    print(accepted_channels)
-    coco.print_stat()
-    coco.filter_imgs(accepted_channels, 'channel').print_stat().to_json(args.coco + '.dfid.json')
+    print(f'distribution for {args.reference}: {ref_w}, {ref_h}, ({ref_w * 1024}, {ref_h * 576}) in (1024x576 image)')
+    if args.coco:
+        coco = COCO(args.coco)
+        mean_wh = calc_mean_width_height(coco)
+        accepted_channels = set()
+        for channel, (w, h) in mean_wh.items():
+            threshold = args.threshold
+            if abs(w - ref_w) < threshold \
+                    and abs(h - ref_h) < threshold \
+                    and abs(w - ref_w) + abs(h - ref_h) < threshold * 1.5:
+                print(f'{channel} accepted, {mean_wh[channel]}')
+                accepted_channels.add(channel)
+        print(accepted_channels)
+        coco.print_stat()
+        coco.filter_imgs(accepted_channels, 'channel').print_stat().to_json(args.coco + '.dfid.json')
 
 
 if __name__ == '__main__.py':
