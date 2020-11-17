@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='coco',
     python_requires='>=3.6',
-    version='0.2.0.0',
+    version='0.2.0.1',
     description='a tool to manage coco dataset file',
     author='qzhu',
     author_email='qzhu.working@gmail.com',
@@ -16,6 +16,6 @@ setup(
         'loguru>=0.5.3',
     ],
     entry_points={'console_scripts': [
-        'coco=coco.__main__.py:main',
+        'coco=coco.__main__:main',
     ]},
 )

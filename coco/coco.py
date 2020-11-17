@@ -384,8 +384,8 @@ class COCO:
     def get_anns_by_image_id(self, image_id, cache=True):
         return self.id_anns_dict(cache=cache)[image_id]
 
-    def head(self, n=50):
-        self.split(n, rand=False, return_new_part=False)
+    def head(self, n=50, rand=False):
+        self.split(n, rand=rand, return_new_part=False)
         return self
 
     def stat(self):
