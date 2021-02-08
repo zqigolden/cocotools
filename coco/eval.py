@@ -7,7 +7,7 @@ from pycocotools.cocoeval import COCOeval
 
 class Evaluator(object):
 
-    def __init__(self, anno_file):
+    def __init__(self, anno_file: str):
         self.anno_file = anno_file
         self._COCO = COCO(self.anno_file)
         self._cats = self._COCO.loadCats(self._COCO.getCatIds())
@@ -67,7 +67,7 @@ class Evaluator(object):
 
     def evaluate(self, res_file):
         ann_type = 'bbox'
-        coco_dt = self._COCO.loadRes(res_file)
+        coco_dt = self._COCO.loadRes(str(res_file))
         coco_eval = COCOeval(self._COCO, coco_dt)
         coco_eval.params.useSegm = (ann_type == 'segm')
         coco_eval.evaluate()

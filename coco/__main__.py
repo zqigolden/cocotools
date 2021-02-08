@@ -1,1 +1,1 @@
-from .coco import main
+import coco.main

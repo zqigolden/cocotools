@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import argparse
 import copy
 import fnmatch
 import json
@@ -8,146 +7,52 @@ import os
 import random
 import re
 import shutil
-import sys
 import tempfile
-from loguru import logger
-from collections import OrderedDict, defaultdict, Counter
+from collections import OrderedDict, Counter
 from operator import itemgetter
-from typing import List, Dict, Set, Iterable, Union, Optional
+from typing import List, Dict, Iterable, Union, Optional, Tuple
+from pathlib import Path
+import imagesize
 
 import cv2
-import numpy as np
+from loguru import logger
 
-LOGLEVEL = os.environ.get('LOGLEVEL', 'INFO').upper()
-logger.remove()
-logger.add(sys.stderr, level=LOGLEVEL)
+from coco.consts import IMAGES, ANNOTATIONS, CATEGORIES, ANN_IMG_ID, ANN_CAT_ID, IMG_FILENAME, INDENT
+from coco.utils import promise_set, get_slice, limit_box_in_image, grep_set, grep_list, grep_iter, group_by, \
+    filter_with, mapping, remap_num
 
 try:
     from tqdm import tqdm
 except ImportError:
     print('tqdm not found')
+    tqdm = lambda x: x
 
 
-    def tqdm(it, *args, **kwargs):
-        return it
-
-MAX_INT = sys.maxsize
-IMAGES = 'images'
-ANNOTATIONS = 'annotations'
-CATEGORIES = 'categories'
-ANN_IMG_ID = 'image_id'
-ANN_CAT_ID = 'category_id'
-IMG_FILENAME = 'file_name'
-
-
-def promise_set(in_val=None) -> set:
+def make_dt_by_gt(dt_file: str, gt_coco: 'COCO' = None) -> str:
     """
-    make anything a set
-    :param in_val: input data
-    :return: a set suitable in_val
+    input detect result file, if the file is list like:
+        [filename cls x y w h cls x y w h ...]
+    or:
+        [filename cls x y w h other1 other2 cls x y w h other1 other2 ...]
+    this function will return its coco format, otherwise return dt_file
+    itself if it already is coco format like:
+    [{
+
+        'image_id': ...,
+        'category_id': ...,
+        'score': ...,
+        'bbox': [x, y, w, h]
+    }...]
+    :param dt_file: input file
+    :param gt_coco: reference ground truth coco file
+    :return: result file name(tempfile)
     """
-    if in_val is None:
-        return set()
-    if not isinstance(in_val, str) and isinstance(in_val, Iterable):
-        return set(in_val)
-    return {in_val}
-
-
-def get_box(bbox):
-    return np.s_[bbox[1]:bbox[1] + bbox[3], bbox[0]:bbox[0] + bbox[2], :]
-
-
-def limit_box_in_image(box: List, cols: int = MAX_INT, rows: int = MAX_INT) -> List:
-    """
-    limit the box in image which has the size **cols** and **rows**
-    :param box: [x, y, w, h] box
-    :param cols: the image col size
-    :param rows: the image row size
-    :return: limited box
-    """
-    box[2] = int(min(cols - box[0], box[2]))
-    box[3] = int(min(rows - box[1], box[3]))
-    box[0] = int(max(0, box[0]))
-    box[1] = int(max(0, box[1]))
-    return box
-
-
-def get_set(data: Iterable[Dict], label: str = 'id') -> Set[str]:
-    """
-    get the unique set from the attribute **label** in data
-    :param data:
-    :param label:
-    :return: a set with all **label** in **data**
-    """
-    return set([i[label] for i in data])
-
-
-def get_list(data: Iterable[Dict], label: str = 'id') -> List[str]:
-    """
-    get the ordered list from the attribute **label** in data
-    :param data:
-    :param label:
-    :return: a list with all **label** in **data**
-    """
-    return [i[label] for i in data]
-
-
-def get_iter(data: Iterable[Dict], label: str = 'id') -> Iterable[str]:
-    """
-    get the iterator from the attribute **label** in data
-    :param data:
-    :param label:
-    :return: a iterator with all **label** in **data**
-    """
-    for i in data:
-        yield i[label]
-
-
-def group_by(data: Iterable[Dict], label: str = 'id'):
-    r = defaultdict(list)
-    for d in data:
-        r[d[label]].append(d)
-    return r
-
-
-def filter_with(data: Iterable[Dict], keep_set: Set[str], label: str = 'id') -> Iterable[Dict]:
-    return [i for i in data if i[label] in keep_set]
-
-
-def mapping(data: Iterable[Dict], mapping_dict: Dict, label: str = 'id') -> List[Dict]:
-    def map_it(x):
-        return mapping_dict[x] if x in mapping_dict else x
-
-    dst = []
-    for i in data:
-        i[label] = map_it(i[label])
-        dst.append(i)
-    return dst
-
-
-def remap_num(data: List[Dict], label='id', start=0, order_by=None) -> List[dict]:
-    """
-    Change to int sequence, no other operations
-    :param order_by:
-    :param start:
-    :param label:
-    :param data:
-    :return:
-    """
-    if order_by:
-        data.sort(key=lambda x: x[order_by])
-    for loc, i in enumerate(data, start=start):
-        i[label] = loc
-    return data
-
-
-def make_dt_by_gt(dt_file, gt_coco):
     with open(dt_file) as f:
         dt_content = f.read()
         try:
             json.loads(dt_content)
             return dt_file
-        except:
+        except json.decoder.JSONDecodeError:
             try:
                 # format: imgname [conf cls x y w h] ...
                 dt = []
@@ -167,7 +72,7 @@ def make_dt_by_gt(dt_file, gt_coco):
                             'bbox': [int(x), int(y), int(w), int(h)]
                         })
                         del items[:6]
-            except:
+            except IndexError:
                 # format: imgname [conf cls x y w h unknown1 unknown2] ...
                 dt = []
                 gt_coco.imgname_id_dict(cache=False)
@@ -211,10 +116,11 @@ class COCO:
         self.images: List[Dict] = raw[IMAGES]
         self.annotations: List[Dict] = raw[ANNOTATIONS]
         self.categories: List[Dict] = raw[CATEGORIES]
-        self._id_img_dict = None
-        self._img_name_id_dict = None
-        self._id_img_name_dict = None
-        self._id_anns_dict = None
+        self._id_img_dict: Optional[Dict[str:Dict]] = None
+        self._img_name_id_dict: Optional[Dict[str:Union[str, int]]] = None
+        self._id_img_name_dict: Optional[Dict[Union[str, int]:str]] = None
+        self._id_anns_dict: Optional[Dict[str:Dict]] = None
+        self._id_cat_dict: Optional[Dict[str:Dict]] = None
 
     @staticmethod
     def create(images, annotations, categories) -> 'COCO':
@@ -225,12 +131,27 @@ class COCO:
         })
 
     @staticmethod
-    def from_image_dir(image_dir, cls_list=('object',), suffix='jpg'):
+    def from_image_dir(image_dir: Path, cls_list: Tuple[str] = ('object',), suffix: str = 'jpg',
+                       with_box: bool = False):
         assert os.path.isdir(image_dir)
         image_names = sorted(i for i in os.listdir(image_dir) if i.endswith(suffix))
-        images = [{IMG_FILENAME: name, 'id': i} for i, name in enumerate(image_names)]
+        images = []
+        annos = []
+        for i, name in enumerate(image_names):
+            width, height = imagesize.get(image_dir / name)
+            images.append({IMG_FILENAME: name, 'id': i, 'height': height, 'width': width})
+            if with_box:
+                annos.append({
+                    ANN_IMG_ID: i,
+                    ANN_CAT_ID: 1,
+                    'id': len(annos) + 1,
+                    "bbox": [0, 0, width, height],
+                    "segmentation": [],
+                    "iscrowd": 0,
+                    "area": width * height, })
         cats = [{'name': name, 'id': i} for i, name in enumerate(cls_list, start=1)]
-        return COCO.create(images, [], cats)
+
+        return COCO.create(images, annos, cats)
 
     @staticmethod
     def from_detect_file(detect_file_name: str, gt: str = None, th: float = 0.5) -> 'COCO':
@@ -254,7 +175,7 @@ class COCO:
         :param th: score threshold, boxes which one's score lower than th are discard.
         :return: COCO result
         """
-        gt_coco: COCO = None
+        gt_coco: Optional[COCO] = None
         if gt:
             gt_coco = COCO(gt)
         try:
@@ -265,11 +186,11 @@ class COCO:
             new_dt = make_dt_by_gt(detect_file_name, gt_coco)
             with open(new_dt, "r") as f:
                 detect_data = json.load(f)
-        detect_data = list(filter(lambda i: i['score'] > th, detect_data))
+        detect_data = list(filter(lambda x: x['score'] > th, detect_data))
         for i, data in enumerate(detect_data):
             data['id'] = i
-        image_ids = get_set(detect_data, ANN_IMG_ID)
-        cat_ids = get_set(detect_data, ANN_CAT_ID)
+        image_ids = grep_set(detect_data, ANN_IMG_ID)
+        cat_ids = grep_set(detect_data, ANN_CAT_ID)
         if isinstance(detect_data[0][ANN_IMG_ID], str):
             images = [{'id': i, IMG_FILENAME: i} for i in image_ids]
         else:
@@ -359,10 +280,30 @@ class COCO:
                    CATEGORIES: categories}
         return COCO(obj=gt_data)
 
+    # @staticmethod
+    # def from_kps_label_file(labeling_file_name: Path, image_dir: Path, categories_list: List[str]):
+    #     raise Exception('Not complete yet')
+    #     base = COCO.from_image_dir(image_dir, with_box=True)
+    #     label_data = json.loads(labeling_file_name.read_text())
+    #     for file_name, data in label_data.items():
+    #         kps = [(
+    #             data['point_dict'][str(i)]['x'],
+    #             data['point_dict'][str(i)]['y'],
+    #             d['property']['visibility']) for i, d in enumerate(data['graphic_list']) if d['graphic_type'] == 'point']
+    #         logger.debug(f'kps={kps}')
+    #         logger.debug(data)
+    #         exit()
+    #     print(label_data[:3])
+
     def get_img_by_id(self, image_id):
         if not getattr(self, '_id_img_dict', None):
             self._id_img_dict = {i['id']: i for i in self.images}
         return self._id_img_dict[image_id]
+
+    def get_cat_by_id(self, cat_id):
+        if not getattr(self, '_id_cat_dict', None):
+            self._id_cat_dict = {i['id']: i for i in self.categories}
+        return self._id_cat_dict[cat_id]
 
     def imgname_id_dict(self, cache=True):
         if not getattr(self, '_img_name_id_dict', None) or not cache:
@@ -402,7 +343,7 @@ class COCO:
             CATEGORIES: self.categories,
         }, indent=indent)
         if out_file:
-            if isinstance(out_file, str):
+            if isinstance(out_file, (str, Path)):
                 with open(out_file, 'w') as of:
                     of.write(out_str)
             else:
@@ -426,7 +367,7 @@ class COCO:
 
     @imgs.setter
     def imgs(self, new_imgs):
-        self.imgs = new_imgs
+        self.images = new_imgs
 
     @property
     def anns(self) -> List[Dict]:
@@ -441,7 +382,7 @@ class COCO:
         return self.categories
 
     @cats.setter
-    def cats(self, new_cat) -> List[Dict]:
+    def cats(self, new_cat) -> None:
         self.categories = new_cat
 
     def length(self) -> int:
@@ -477,7 +418,7 @@ class COCO:
                                          cols=crop_box[2], rows=crop_box[3])
             new_ann['old_bbox'] = box
             new_ann['bbox'] = new_box
-            new_img_data = cv2.imread(old_img_name)[get_box(crop_box)]
+            new_img_data = cv2.imread(old_img_name)[get_slice(crop_box)]
             new_img_name = os.path.join(out_image_dir, id_name_dict[ann[ANN_IMG_ID]] + '.{}.jpg'.format(ann_id))
             cv2.imwrite(new_img_name, new_img_data)
             new_img = {
@@ -520,13 +461,27 @@ class COCO:
                 y += 70
 
             for ann in ann_dict[image['id']]:
-                color = colors[ann[ANN_CAT_ID] % len(colors)]
-                box = limit_box_in_image(ann['bbox'])
-                img = cv2.rectangle(img, (box[0], box[1]), (box[0] + box[2], box[1] + box[3]),
-                                    color, 3, cv2.LINE_AA)
-                if 'score' in ann:
-                    img = cv2.putText(img, f'{ann["score"]:.3f}', (box[0], box[1] - 2),
-                                      cv2.FONT_HERSHEY_TRIPLEX, 1, color)
+                if 'bbox' in ann:
+                    color = colors[ann[ANN_CAT_ID] % len(colors)]
+                    box = limit_box_in_image(ann['bbox'])
+                    img = cv2.rectangle(img, (box[0], box[1]), (box[0] + box[2], box[1] + box[3]),
+                                        color, 3, cv2.LINE_AA)
+                    if 'score' in ann:
+                        img = cv2.putText(img, f'{ann["score"]:.3f}', (box[0], box[1] - 2),
+                                          cv2.FONT_HERSHEY_TRIPLEX, 1, color)
+                if 'keypoints' in ann:
+                    points = list(zip(
+                        ann['keypoints'][::3], ann['keypoints'][1::3], ann['keypoints'][2::3]))
+                    for i, point in enumerate(points):
+                        color = colors[i % len(colors)]
+                        cv2.circle(img, center=point[:2], radius=5, color=color, thickness=-1, lineType=cv2.LINE_AA)
+                        logger.debug(f'vis -- point: {points}, color: {color}')
+                    if 'skeleton' in self.get_cat_by_id(ann[ANN_CAT_ID]):
+                        for i, line in enumerate(self.get_cat_by_id(ann[ANN_CAT_ID])['skeleton']):
+                            color = colors[i % len(colors)]
+                            logger.debug((i, line))
+                            cv2.line(img, pt1=points[line[0] - 1][:2], pt2=points[line[1] - 1][:2],
+                                     color=color, thickness=3, lineType=cv2.LINE_AA)
                 count += 1
             if count != 0:
                 cv2.imwrite(out_img_name, img)
@@ -564,7 +519,7 @@ class COCO:
             assert len(self.cats) == len(coco_obj.cats), \
                 f'cats size {len(self.cats)} vs {len(coco_obj.cats)} don\'t match'
             print(
-                f'make sure class in same order: {list(zip(get_list(self.cats, "name"), get_list(coco_obj.cats, "name")))}')
+                f'make sure class in same order: {list(zip(grep_list(self.cats, "name"), grep_list(coco_obj.cats, "name")))}')
         else:
             cat_dict = group_by(self.cats)
             for cat in coco_obj.cats:
@@ -610,7 +565,7 @@ class COCO:
         if isinstance(locate, float):
             assert 1 > locate > 0, f'float locate {locate} should in (0, 1)'
             locate = int(len(self) * locate)
-        all_id = get_list(self.imgs)
+        all_id = grep_list(self.imgs)
         if rand:
             random.shuffle(all_id)
         dst_ids = all_id[locate:]
@@ -626,6 +581,8 @@ class COCO:
     def split_dataset(self,
                       front: str = 'instances_train.json',
                       tail: str = 'instances_val.json',
+                      front_dir_name: str = 'train',
+                      tail_dir_name: str = 'val',
                       front_num: float = 0.8,
                       indent=None,
                       image_dir=None):
@@ -640,10 +597,14 @@ class COCO:
                 for img_name in dataset.imgname_id_dict():
                     img_src_path = os.path.join(image_dir, img_name)
                     img_dst_path = os.path.join(dst_dir, img_name)
-                    shutil.copyfile(img_src_path, img_dst_path, follow_symlinks=False)
+                    try:
+                        os.link(img_src_path, img_dst_path, follow_symlinks=False)
+                    except Exception as e:
+                        logger.debug(f'Exception {e}')
+                        shutil.copyfile(img_src_path, img_dst_path, follow_symlinks=False)
 
-            val_dir = os.path.join(image_dir, '..', 'val')
-            train_dir = os.path.join(image_dir, '..', 'train')
+            val_dir = os.path.join(image_dir, '..', tail_dir_name)
+            train_dir = os.path.join(image_dir, '..', front_dir_name)
             copy_images(val_part, val_dir)
             copy_images(self, train_dir)
         return self
@@ -658,10 +619,10 @@ class COCO:
             self.categories = list(filter(categories_rule, self.categories))
         if self.stat() == pre_stat:
             return self
-        kept_img_ids = get_set(self.imgs) & get_set(self.anns, ANN_IMG_ID)
+        kept_img_ids = grep_set(self.imgs) & grep_set(self.anns, ANN_IMG_ID)
         return self.filter(
             images_rule=(lambda x: x['id'] in kept_img_ids) if not keep_images else None,
-            annotations_rule=lambda x: x[ANN_IMG_ID] in kept_img_ids and x[ANN_CAT_ID] in get_set(self.categories))
+            annotations_rule=lambda x: x[ANN_IMG_ID] in kept_img_ids and x[ANN_CAT_ID] in grep_set(self.categories))
 
     def filter_imgs(self, vals, key='id'):
         vals = promise_set(vals)
@@ -721,6 +682,15 @@ class COCO:
         self.remap_image_id(image_id_mapping)
         return self
 
+    def tmp_file_name(self) -> str:
+        """
+        make a tmp coco file and return its name
+        :return: temp file name
+        """
+        f = tempfile.NamedTemporaryFile(mode='w+', delete=False)
+        f.write(self.to_json())
+        return f.name
+
     def mosaic(self, img_dir: str, out_dir: str, cats: Union[set, int] = 1,
                const_boxes: List[List[int]] = ()) -> 'COCO':
         if isinstance(cats, (int, str)):
@@ -735,9 +705,9 @@ class COCO:
             img = cv2.imread(img_name)
             blur = cv2.GaussianBlur(img, (19, 19), 0)
             for ann in anns:
-                img[get_box(ann['bbox'])] = blur[get_box(ann['bbox'])]
+                img[get_slice(ann['bbox'])] = blur[get_slice(ann['bbox'])]
             for const_box in const_boxes:
-                img[get_box(const_box)] = blur[get_box(const_box)]
+                img[get_slice(const_box)] = blur[get_slice(const_box)]
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
             cv2.imwrite(out_img_name, img)
@@ -756,18 +726,18 @@ class COCO:
         if len(exc_data) > 0:
             raise Exception(f'cats id not uniq:\n{exc_data}')
 
-        img_ids = get_set(self.images)
+        img_ids = grep_set(self.images)
         for i in self.anns:
             if i[ANN_IMG_ID] not in img_ids:
                 raise Exception(f'not found image id {i[ANN_IMG_ID]} in {i}')
 
-        cat_ids = get_set(self.cats)
+        cat_ids = grep_set(self.cats)
         for i in self.anns:
             if i[ANN_CAT_ID] not in cat_ids:
                 raise Exception(f'not found cat id {i["id"]} in {i}')
 
         if img_dir:
-            no_img_set = {i for i in get_iter(self.images, IMG_FILENAME) if
+            no_img_set = {i for i in grep_iter(self.images, IMG_FILENAME) if
                           not os.path.exists(os.path.join(img_dir, i))}
             if no_img_set:
                 if not remove_no_image_ann:
@@ -779,6 +749,7 @@ class COCO:
     def evaluate(self, dt: str, cls: Optional[Union[dict, set]] = None) -> 'COCO':
         from .eval import Evaluator
         dt = make_dt_by_gt(dt, self)
+        print(dt)
         tmp_file_dt = tempfile.NamedTemporaryFile(mode='w+')
         tmp_file = tempfile.NamedTemporaryFile(mode='w+')
         logger.debug(f'tmp_file_dt = {tmp_file_dt.name}')
@@ -799,76 +770,3 @@ class COCO:
         evaluator = Evaluator(tmp_file.name)
         evaluator.evaluate(dt)
         return self
-
-
-_intro_str = f'''
-    visualize coco data:
-        COCO('instances_train_shoes.json').visualize('../train', 'out_dir')
-    filter data:
-        COCO('instances_train_shoes.json').head(1)
-        COCO('instances_train_shoes.json').keep(min_area=300)
-    filter classes:
-        COCO('Objects365/Annotations/train/train.json').filter_class({{2, 18, 29, 43, 54, 61, 167}})
-    output:
-        COCO('instances_train.json').print()
-        COCO('instances_train.json').to_json('out.json')
-    health check:
-        COCO('instances_train.json').health_check('../train/')
-    dir(COCO): {dir(COCO)}" '''
-
-
-def arg_parse():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('inputs', nargs='*', help='input files')
-    parser.add_argument('-d', '--debug', action='store_true', help='turn on debug mode')
-    parser.add_argument('-c', '--command', action='store_true', help='commands in python')
-    parser.add_argument('-e', '--evaluate', action='store_true', help='evaluate coco result, file1: gt; file2: dt')
-    parser.add_argument('-m', '--merge', action='store_true', help='merge all inputs, file1: coco; file2: coco, ...')
-    parser.add_argument('-v', '--visualize', action='store_true', help='visualize inputs, file1: coco; file2: img dir')
-    parser.add_argument('-p', '--print_stat', action='store_true',
-                        help='visualize coco stats(img len, ann len, cat len), file1: coco')
-    #parser.add_argument('--help', action='store_true', help='print help')
-    parser.add_argument('-o', '--output', default='/dev/stdout')
-    return parser.parse_args()
-
-
-@logger.catch()
-def main():
-    args = arg_parse()
-    if args.debug:
-        logger.getLogger().setLevel(logger.DEBUG)
-    logger.debug(vars(args))
-
-    if not args.command:
-        # if args.help:
-        #     print(_intro_str)
-        #     return
-        if args.evaluate:
-            assert len(args.inputs) == 2
-            gt_file = args.inputs[0]
-            det_file = args.inputs[1]
-            COCO(gt_file).evaluate(det_file)
-        elif args.merge:
-            assert len(args.inputs) >= 2
-            dst = COCO(args.inputs[0])
-            for i in args.inputs[1:]:
-                dst.merge(COCO(i))
-            dst.to_json(out_file=args.output, indent=2)
-        elif args.visualize:
-            assert len(args.inputs) == 2
-            COCO(args.inputs[0]).visualize(img_dir=args.inputs[1])
-        elif args.print_stat:
-            assert len(args.inputs) >= 1
-            for i in args.inputs:
-                print(f'Stat of {i}:')
-                COCO(i).print_stat()
-        else:
-            for cmd in args.inputs:
-                eval(cmd)
-    else:
-        for cmd in args.inputs:
-            eval(cmd)
-
-
-if __name__ == '__main__.py':
-    main()

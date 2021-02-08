@@ -12,7 +12,8 @@ setup(
         'opencv-python>=4.2.0',
         'tqdm>=4.36.1',
         'numpy>=1.18.5',
-        #'pycocotools>=2.0.2',
+        'pycocotools>=2.0.2',
+        'typer[all]'
         'loguru>=0.5.3',
     ],
     entry_points={'console_scripts': [

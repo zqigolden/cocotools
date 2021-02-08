@@ -5,7 +5,8 @@ from collections import defaultdict
 from typing import Set, Optional, Sequence, Dict
 
 from .. import COCO
-from ..coco import get_set, IMG_FILENAME
+from ..consts import IMG_FILENAME
+from ..utils import grep_set
 
 
 def parse_channel_from_img_name(img_name: str) -> Optional[Sequence[str]]:
@@ -35,7 +36,7 @@ def update_channels(coco: COCO) -> COCO:
 
 def get_all_channels(coco: COCO) -> Set[str]:
     update_channels(coco)
-    return get_set(coco.imgs, 'channel')
+    return grep_set(coco.imgs, 'channel')
 
 
 def calc_mean_width_height(coco: COCO, ignore_channel=False) -> Dict[str, float]:
