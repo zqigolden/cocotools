@@ -15,6 +15,7 @@ A tool for python/shell to manage json dataset files in coco format
 1. `from coco import COCO; ...` in python code
 
 ## install
+- `python3 -m pip install --update pip setuptools` (Optional, only if something wrong while installing)
 - `python3 -m pip install https://github.com/zqigolden/cocotools/archive/master.zip`
 - `python3 -m pip install https://github.com/zqigolden/cocotools/archive/master.zip -i https://mirrors.aliyun.com/pypi/simple` (Using aliyun source)
 

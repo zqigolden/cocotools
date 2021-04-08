@@ -9,12 +9,16 @@ setup(
     author_email='qzhu.working@gmail.com',
     packages=['coco'],
     install_requires=[
-        'opencv-python>=4.2.0',
-        'tqdm>=4.36.1',
-        'numpy>=1.18.5',
-        'pycocotools>=2.0.2',
-        'typer[all]'
-        'loguru>=0.5.3',
+        'numpy',
+        'scipy',
+        'loguru',
+        'opencv-python',
+        'tqdm',
+        'pycocotools',
+        'typer[all]',
+        'setuptools',
+        'imagesize',
+        'easydict',
     ],
     entry_points={'console_scripts': [
         'coco=coco.__main__:main',

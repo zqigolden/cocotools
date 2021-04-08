@@ -15,17 +15,12 @@ from pathlib import Path
 import imagesize
 
 import cv2
-from loguru import logger
+from tqdm import tqdm
+from .log_utils import logger
 
-from coco.consts import IMAGES, ANNOTATIONS, CATEGORIES, ANN_IMG_ID, ANN_CAT_ID, IMG_FILENAME, INDENT
+from coco.consts import IMAGES, ANNOTATIONS, CATEGORIES, ANN_IMG_ID, ANN_CAT_ID, IMG_FILENAME
 from coco.utils import promise_set, get_slice, limit_box_in_image, grep_set, grep_list, grep_iter, group_by, \
     filter_with, mapping, remap_num
-
-try:
-    from tqdm import tqdm
-except ImportError:
-    print('tqdm not found')
-    tqdm = lambda x: x
 
 
 def make_dt_by_gt(dt_file: str, gt_coco: 'COCO' = None) -> str:
@@ -280,21 +275,6 @@ class COCO:
                    CATEGORIES: categories}
         return COCO(obj=gt_data)
 
-    # @staticmethod
-    # def from_kps_label_file(labeling_file_name: Path, image_dir: Path, categories_list: List[str]):
-    #     raise Exception('Not complete yet')
-    #     base = COCO.from_image_dir(image_dir, with_box=True)
-    #     label_data = json.loads(labeling_file_name.read_text())
-    #     for file_name, data in label_data.items():
-    #         kps = [(
-    #             data['point_dict'][str(i)]['x'],
-    #             data['point_dict'][str(i)]['y'],
-    #             d['property']['visibility']) for i, d in enumerate(data['graphic_list']) if d['graphic_type'] == 'point']
-    #         logger.debug(f'kps={kps}')
-    #         logger.debug(data)
-    #         exit()
-    #     print(label_data[:3])
-
     def get_img_by_id(self, image_id):
         if not getattr(self, '_id_img_dict', None):
             self._id_img_dict = {i['id']: i for i in self.images}
@@ -475,6 +455,7 @@ class COCO:
                     for i, point in enumerate(points):
                         color = colors[i % len(colors)]
                         cv2.circle(img, center=point[:2], radius=5, color=color, thickness=-1, lineType=cv2.LINE_AA)
+                        cv2.putText(img, str(point[2]), (point[0] - 5, point[1] - 5), cv2.FONT_HERSHEY_TRIPLEX, 1, color)
                         logger.debug(f'vis -- point: {points}, color: {color}')
                     if 'skeleton' in self.get_cat_by_id(ann[ANN_CAT_ID]):
                         for i, line in enumerate(self.get_cat_by_id(ann[ANN_CAT_ID])['skeleton']):
@@ -518,7 +499,7 @@ class COCO:
         if same_cats:
             assert len(self.cats) == len(coco_obj.cats), \
                 f'cats size {len(self.cats)} vs {len(coco_obj.cats)} don\'t match'
-            print(
+            logger.warning(
                 f'make sure class in same order: {list(zip(grep_list(self.cats, "name"), grep_list(coco_obj.cats, "name")))}')
         else:
             cat_dict = group_by(self.cats)
@@ -666,7 +647,7 @@ class COCO:
                 else:
                     count += 1
         if count > 0:
-            print('remove dump images {}'.format(count))
+            logger.info('remove dump images {}'.format(count))
         self.images = list(mem.values())
         return self
 
@@ -743,13 +724,13 @@ class COCO:
                 if not remove_no_image_ann:
                     raise Exception(f'no image: {no_img_set}')
                 self.remove_imgs(names=no_img_set)
-                print(f'remove {len(no_img_set)} images with no image')
+                logger.info(f'remove {len(no_img_set)} images with no image')
         return self
 
     def evaluate(self, dt: str, cls: Optional[Union[dict, set]] = None) -> 'COCO':
         from .eval import Evaluator
         dt = make_dt_by_gt(dt, self)
-        print(dt)
+        logger.info(dt)
         tmp_file_dt = tempfile.NamedTemporaryFile(mode='w+')
         tmp_file = tempfile.NamedTemporaryFile(mode='w+')
         logger.debug(f'tmp_file_dt = {tmp_file_dt.name}')

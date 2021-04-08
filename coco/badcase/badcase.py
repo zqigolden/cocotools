@@ -3,6 +3,7 @@ import copy
 from .. import COCO
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from ..log_utils import logger
 
 
 def calc_iou_xywh(box_a, box_b):
@@ -27,7 +28,7 @@ def calc_iou_xyxy(box_a, box_b):
     iou = intersect_area / float(union_area)
     return iou
 
-from loguru import logger
+
 @logger.catch
 def get_badcase(gt:COCO, dt:COCO, cat=1, threshold:float = 0.5)->COCO:
     """

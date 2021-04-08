@@ -1,32 +1,40 @@
-import argparse
 import sys
-import os
 import json
 from typing import List
 import typer
+import code
 from pathlib import Path
 
 from easydict import EasyDict
-from loguru import logger
+from .log_utils import logger
 
+from . import consts
 from .coco import COCO
 
 app = typer.Typer()
-logger.remove()
-logger.add(sys.stderr, level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 
 @app.callback()
-def debug_callback(debug: bool = typer.Option(False, '--debug', '-d', help='debug level for logging')):
+def callback(
+        debug: bool = typer.Option(False, '-d', '--debug', help='debug level for logging'),
+        indent: int = typer.Option(None, '-i', '--indent', help='set the output json indent')):
     if debug:
+        consts.DEBUG = True
         logger.remove()
         logger.add(sys.stderr, level='DEBUG')
+    if indent:
+        consts.INDENT = indent
 
 
 @app.command()
 def cmd(args: List[str]):
-    for arg in args:
-        exec(arg)
+    try:
+        for arg in args:
+            exec(arg)
+    except Exception as e:
+        logger.info(repr(e))
+        from coco import COCO
+        code.interact(local=globals().copy().update(locals()))
 
 
 @app.command()
@@ -35,7 +43,7 @@ def evaluate(gt_file: Path = typer.Argument(..., exists=True, dir_okay=False),
     """
     evaluate coco result
     """
-    COCO(gt_file).evaluate(dt_file)
+    COCO(gt_file).evaluate(str(dt_file))
 
 
 @app.command()
@@ -49,7 +57,7 @@ def merge(inputs_cocos: List[Path] = typer.Argument(..., exists=True, dir_okay=F
     for i in inputs_cocos[1:]:
         logger.debug(i)
         dst.merge(COCO(i))
-    dst.to_json(out_file=output, indent=2)
+    dst.to_json(out_file=output, indent=consts.INDENT)
 
 
 @app.command()
@@ -70,11 +78,12 @@ def visualize(coco_file: Path = typer.Argument(..., exists=True, dir_okay=False)
     visualize inputs
     """
     try:
+        logger.debug('visualize {} with images in {}', coco_file, img_dir)
         COCO(coco_file).visualize(img_dir=img_dir)
     except json.JSONDecodeError:
         logger.info(f'non-coco input file {coco_file} detect, trying to convert')
         empty_gt = COCO.from_image_dir(img_dir).tmp_file_name()
-        COCO.from_detect_file(coco_file, empty_gt).visualize(img_dir=img_dir)
+        COCO.from_detect_file(str(coco_file), empty_gt).visualize(img_dir=img_dir)
 
 
 @app.command()
@@ -82,6 +91,9 @@ def convert_box_labeling(label_file: Path = typer.Argument(..., exists=True, dir
                          image_dir: Path = typer.Argument(..., exists=True, file_okay=False),
                          cats=typer.Option(None, '-c'),
                          output: Path = typer.Option('/dev/stdout', '-o', help='default output to stdout')):
+    """
+    convert human labeling result into coco format
+    """
     if cats is None:
         with open(label_file) as f:
             cats = {item['type'] for v in json.load(f).values() for item in v['data']}
@@ -98,15 +110,18 @@ def convert_box_labeling(label_file: Path = typer.Argument(..., exists=True, dir
     COCO.from_label_file(
         labeling_file_name=label_file,
         image_dir=image_dir,
-        categories_list=cats).to_json(out_file=output, indent=2)
+        categories_list=cats).to_json(out_file=output, indent=consts.INDENT)
 
 
 @app.command()
 def from_image_dir(image_dir: Path = typer.Argument(..., exists=True, file_okay=False),
                    with_box: bool = typer.Option(False, '--with-box/--no-box', '-wb/-nb'),
                    output_coco: Path = typer.Option('/dev/stdout', '-o', dir_okay=False)):
+    """
+    create empty coco file from image dir
+    """
     logger.debug('enter: from image dir')
-    COCO.from_image_dir(image_dir=image_dir, with_box=with_box).to_json(output_coco)
+    COCO.from_image_dir(image_dir=image_dir, with_box=with_box).to_json(output_coco, indent=consts.INDENT)
 
 
 @app.command(help='split dataset into train (80%) and val (20%), arg1:coco arg2:img_dir')
@@ -119,83 +134,20 @@ def split_dataset(coco_file: str = typer.Argument(..., exists=True, dir_okay=Fal
     if 'all' in image_dir:
         split_args.front_dir_name = image_dir.replace('all', 'train')
         split_args.tail_dir_name = image_dir.replace('all', 'val')
-    COCO(coco_file).split_dataset(image_dir=image_dir, **split_args)
+    COCO(coco_file).split_dataset(image_dir=image_dir, indent=consts.INDENT, **split_args)
 
-# @app.command()
-# def convert_kps_labeling(label_file: Path = typer.Argument(..., exists=True, dir_okay=False),
-#                          image_dir: Path = typer.Argument(..., exists=True, file_okay=False),
-#                          cats: str = typer.Option('car', '-c'),
-#                          output: Path = typer.Option(None, '-o', help='default output to stdout')):
-#     COCO.from_kps_label_file(label_file, image_dir, cats)
+
+@app.command(help='convert image id to num')
+def to_num_id(coco_file: Path = typer.Argument(..., exists=True, dir_okay=False)):
+    output_file = coco_file.with_name(f'{coco_file.stem}.num_id{coco_file.suffix}')
+    COCO(coco_file).to_num_id().to_json(output_file, indent=consts.INDENT)
+    print(f'output to {output_file}')
+
+@app.command(help='convert image id to str')
+def to_str_id(coco_file: Path = typer.Argument(..., exists=True, dir_okay=False)):
+    output_file = coco_file.with_name(f'{coco_file.stem}.str_id{coco_file.suffix}')
+    COCO(coco_file).to_str_id().to_json(output_file, indent=consts.INDENT)
+    print(f'output to {output_file}')
 
 
 logger.catch(app)()
-exit()
-
-def arg_parse():
-    parser = argparse.ArgumentParser()
-    # parser.add_argument('inputs', nargs='*', help='input files')
-    # parser.add_argument('-d', '--debug', action='store_true',
-    #                     help='turn on debug mode')
-    # parser.add_argument('-c', '--command', action='store_true',
-    #                     help='commands in python')
-    # parser.add_argument('-e', '--evaluate', action='store_true',
-    #                     help='evaluate coco result, file1: gt; file2: dt')
-    # parser.add_argument('-m', '--merge', action='store_true',
-    #                     help='merge all inputs, file1: coco; file2: coco, ...')
-    parser.add_argument('-v', '--visualize', action='store_true',
-                        help='visualize inputs, file1: coco; file2: img dir')
-    # parser.add_argument('-p', '--print_stat', action='store_true',
-    #                     help='visualize coco stats(img len, ann len, cat len), file1: coco')
-    parser.add_argument('--split_dataset', action='store_true',
-                        help='split dataset into train (80%%) and val (20%%), arg1:coco arg2:img_dir')
-    # parser.add_argument('--help', action='store_true', help='print help')
-    parser.add_argument('-o', '--output', default='/dev/stdout')
-    return parser.parse_args()
-
-
-@logger.catch()
-def main():
-    args = arg_parse()
-    if args.debug:
-        logger.getLogger().setLevel(logger.DEBUG)
-    logger.debug(vars(args))
-
-    if not args.command:
-        # if args.help:
-        #     print(_intro_str)
-        #     return
-        if args.evaluate:
-            assert len(args.inputs) == 2
-            gt_file = args.inputs[0]
-            det_file = args.inputs[1]
-            COCO(gt_file).evaluate(det_file)
-        elif args.merge:
-            assert len(args.inputs) >= 2
-            dst = COCO(args.inputs[0])
-            for i in args.inputs[1:]:
-                dst.merge(COCO(i))
-            dst.to_json(out_file=args.output, indent=2)
-        elif args.visualize:
-            assert len(args.inputs) == 2
-            try:
-                COCO(args.inputs[0]).visualize(img_dir=args.inputs[1])
-            except json.JSONDecodeError:
-                logger.info(f'non-coco input file {args.inputs[1]} detect, trying to convert')
-                empty_gt = COCO.from_image_dir(args.inputs[1]).tmp_file_name()
-                COCO.from_detect_file(args.inputs[0], empty_gt).visualize(img_dir=args.inputs[1])
-
-        elif args.split_dataset:
-            COCO(args.input[0]).split_dataset(image_dir=args.input[1])
-
-        elif args.print_stat:
-            assert len(args.inputs) >= 1
-            for i in args.inputs:
-                print(f'Stat of {i}:')
-                COCO(i).print_stat()
-        else:
-            for cmd in args.inputs:
-                eval(cmd)
-    else:
-        for cmd in args.inputs:
-            eval(cmd)
