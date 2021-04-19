@@ -14,7 +14,7 @@ setup(
         'loguru',
         'opencv-python',
         'tqdm',
-        'pycocotools==1.17.5',
+        'pycocotools',
         'typer[all]',
         'setuptools',
         'imagesize',

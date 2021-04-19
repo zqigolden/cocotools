@@ -7,7 +7,7 @@ from pathlib import Path
 
 from easydict import EasyDict
 from .log_utils import logger
-
+from enum import Enum
 from . import consts
 from .coco import COCO
 
@@ -36,14 +36,18 @@ def cmd(args: List[str]):
         from coco import COCO
         code.interact(local=globals().copy().update(locals()))
 
+class EvaluateType(str, Enum):
+    bbox = 'bbox'
+    kps = 'kps'
 
 @app.command()
 def evaluate(gt_file: Path = typer.Argument(..., exists=True, dir_okay=False),
-             dt_file: Path = typer.Argument(..., exists=True, dir_okay=False)):
+             dt_file: Path = typer.Argument(..., exists=True, dir_okay=False),
+             ann_type: EvaluateType = EvaluateType.bbox):
     """
     evaluate coco result
     """
-    COCO(gt_file).evaluate(str(dt_file))
+    COCO(gt_file).evaluate(str(dt_file), ann_type=ann_type)
 
 
 @app.command()

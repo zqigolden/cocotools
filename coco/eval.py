@@ -65,14 +65,16 @@ class Evaluator(object):
         print('~~~~ Summary metrics ~~~~')
         coco_eval.summarize()
 
-    def evaluate(self, res_file):
-        ann_type = 'bbox'
+    def evaluate(self, res_file, ann_type='bbox'):
         coco_dt = self._COCO.loadRes(str(res_file))
         coco_eval = COCOeval(self._COCO, coco_dt)
         coco_eval.params.useSegm = (ann_type == 'segm')
         coco_eval.evaluate()
         coco_eval.accumulate()
-        self._print_detection_eval_metrics(coco_eval)
+        try:
+            self._print_detection_eval_metrics(coco_eval)
+        except IndexError:
+            coco_eval.summarize()
 
 
 if __name__ == '__main__.py':

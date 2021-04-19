@@ -727,7 +727,7 @@ class COCO:
                 logger.info(f'remove {len(no_img_set)} images with no image')
         return self
 
-    def evaluate(self, dt: str, cls: Optional[Union[dict, set]] = None) -> 'COCO':
+    def evaluate(self, dt: str, cls: Optional[Union[dict, set]] = None, ann_type='bbox') -> 'COCO':
         from .eval import Evaluator
         dt = make_dt_by_gt(dt, self)
         logger.info(dt)
@@ -749,5 +749,5 @@ class COCO:
             dt = tmp_file_dt.name
         self.to_json(tmp_file)
         evaluator = Evaluator(tmp_file.name)
-        evaluator.evaluate(dt)
+        evaluator.evaluate(dt, ann_type=ann_type)
         return self
