@@ -36,9 +36,11 @@ def cmd(args: List[str]):
         from coco import COCO
         code.interact(local=globals().copy().update(locals()))
 
+
 class EvaluateType(str, Enum):
     bbox = 'bbox'
-    kps = 'kps'
+    keypoints = 'keypoints'
+
 
 @app.command()
 def evaluate(gt_file: Path = typer.Argument(..., exists=True, dir_okay=False),
