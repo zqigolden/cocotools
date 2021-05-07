@@ -68,7 +68,8 @@ class Evaluator(object):
     def evaluate(self, res_file, ann_type='bbox'):
         coco_dt = self._COCO.loadRes(str(res_file))
         coco_eval = COCOeval(self._COCO, coco_dt)
-        coco_eval.params.useSegm = (ann_type == 'segm')
+        coco_eval.params.iouType = ann_type
+        # coco_eval.params.useSegm = (ann_type == 'segm')
         coco_eval.evaluate()
         coco_eval.accumulate()
         try:

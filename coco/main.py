@@ -86,10 +86,10 @@ def visualize(coco_file: Path = typer.Argument(..., exists=True, dir_okay=False)
     try:
         logger.debug('visualize {} with images in {}', coco_file, img_dir)
         COCO(coco_file).visualize(img_dir=img_dir)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         logger.info(f'non-coco input file {coco_file} detect, trying to convert')
         empty_gt = COCO.from_image_dir(img_dir).tmp_file_name()
-        COCO.from_detect_file(str(coco_file), empty_gt).visualize(img_dir=img_dir)
+        COCO.from_detect_file(str(coco_file), empty_gt).print_stat().visualize(img_dir=img_dir)
 
 
 @app.command()

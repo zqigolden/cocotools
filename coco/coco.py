@@ -418,8 +418,6 @@ class COCO:
                   (255, 127, 127), (127, 127, 255), (127, 255, 127),
                   (255, 0, 0), (0, 255, 0), (0, 0, 255))
         ann_dict = group_by(self.annotations, ANN_IMG_ID)
-        if not os.path.exists(out_img_dir):
-            os.makedirs(out_img_dir)
         for image in self.images:
             img_name = os.path.join(img_dir, image[IMG_FILENAME])
             if skip_no_image:
@@ -429,6 +427,9 @@ class COCO:
                 assert os.path.exists(img_name)
             out_img_name = os.path.join(out_img_dir, image[IMG_FILENAME])
             img = cv2.imread(img_name)
+            if img is None:
+                print(f'read image {img_name} failed')
+                continue
             count = 0
 
             # add legend
@@ -453,6 +454,7 @@ class COCO:
                     points = list(zip(
                         ann['keypoints'][::3], ann['keypoints'][1::3], ann['keypoints'][2::3]))
                     for i, point in enumerate(points):
+                        point = tuple(map(int, point))
                         color = colors[i % len(colors)]
                         cv2.circle(img, center=point[:2], radius=5, color=color, thickness=-1, lineType=cv2.LINE_AA)
                         cv2.putText(img, str(point[2]), (point[0] - 5, point[1] - 5), cv2.FONT_HERSHEY_TRIPLEX, 1, color)
@@ -465,6 +467,7 @@ class COCO:
                                      color=color, thickness=3, lineType=cv2.LINE_AA)
                 count += 1
             if count != 0:
+                Path(out_img_name).parent.mkdir(exist_ok=True, parents=True)
                 cv2.imwrite(out_img_name, img)
         return self
 
