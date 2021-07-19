@@ -56,7 +56,9 @@ def make_dt_by_gt(dt_file: str, gt_coco: 'COCO' = None) -> str:
                     items = line.strip().split(' ')
                     assert len(items) % 6 == 1
                     file_name = items[0]
-                    file_id = gt_coco.imgname_id_dict()[file_name]
+                    file_id = gt_coco.imgname_id_dict().get(file_name, None)
+                    if not file_id:
+                        file_id = gt_coco.imgname_id_dict()[os.path.basename(file_name)]
                     del items[0]
                     while items:
                         conf, cls, x, y, w, h = items[:6]
