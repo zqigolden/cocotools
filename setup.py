@@ -16,7 +16,6 @@ setup(
         'tqdm',
         'pycocotools',
         'typer[all]',
-        'setuptools',
         'imagesize',
         'easydict',
     ],
